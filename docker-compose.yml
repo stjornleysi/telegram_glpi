@@ -1,0 +1,13 @@
+version: '3'
+
+services:
+  support_bot:
+    build: ../telegram-support-bot
+    restart: always
+    volumes:
+      - /bot/data
+      - ../telegram-support-bot:/bot
+      - data:/bot/data
+
+volumes:
+  data:

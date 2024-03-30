@@ -1,0 +1,9 @@
+[Service]
+User=root
+ExecStart=node /home/user/telegram_support_bot/telegram_support_bot.js
+Restart=always
+
+[Install]
+WantedBy=default.target
+RequiredBy=another.service
+DefaultInstance=my-template@.service

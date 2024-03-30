@@ -1,0 +1,11 @@
+{
+    "telegramBotToken": "",   
+    "supportChatId": "", 
+    "CompanyName": "",   
+    "glpiConfig": {
+        "apiurl": "",
+        "app_token": "", 
+        "user_token": "",
+        "user_id": ""
+    }
+}
