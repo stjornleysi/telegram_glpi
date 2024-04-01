@@ -479,7 +479,9 @@ async function refreshStatus(){
 	let listTickets = await glpm.getAllItems('Ticket', 49);
 	dataId = JSON.parse(fs.readFileSync(dir + "/data/dataId.json"));	
 	for(let i = 49; i >= 0; i--){
+		if(i > listTickets.length) continue;
 		let ticketId = listTickets[i].id;
+		
 		try{
 			if(dataId["history"][ticketId].status != listTickets[i].status && listTickets[i].users_id_recipient != conf.glpiConfig.user_id){
 				let messageId = dataId["history"][ticketId].messageId;
