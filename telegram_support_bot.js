@@ -385,6 +385,7 @@ let dataId = JSON.parse(fs.readFileSync(dir + "/data/dataId.json"));
 			let listTickets = await glpm.getAllItems('Ticket', 5);
 			for(let i = 5; i >= 0; i--){
 				let ticketId;
+				if(i > listTickets.length) continue;
 				if(!listTickets) break;
 				ticketId = listTickets[i].id;
 				if(ticketId <= dataId.ticket) continue;
