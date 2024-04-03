@@ -136,7 +136,7 @@ bot.on('text', async (ctx) => {
 		}else if(ticketId){
 			await ctx.reply("Чтобы отправить комментарий, завершите текущую заявку, отмените её или перезапустите бота");
 			return;
-		}else if(ticketData[ctx.chat.id]["flag"] == 'location'){
+		}else if(ticketData[ctx.chat.id] && ticketData[ctx.chat.id]["flag"] == 'location'){
 			ticketData[ctx.chat.id]['data']['Кабинет'] = ctx.message.text;
 			if(ticketData[ctx.chat.id]["nextText"]){
 				await ctx.reply(ticketData[ctx.chat.id]["nextText"]);
@@ -148,7 +148,7 @@ bot.on('text', async (ctx) => {
 				await deleteMessage(ctx, ctx.message.message_id - 1);
 				await deleteMessage(ctx, ctx.message.message_id);								
 			}			
-		}else if(ticketData[ctx.chat.id]["flag"] == 'description'){
+		}else if(ticketData[ctx.chat.id] && ticketData[ctx.chat.id]["flag"] == 'description'){
 			ticketData[ctx.chat.id]['data']['Описание'] = ctx.message.text;
 			await ctx.reply('Подтвердите отправку', cns.keyboards.final);
 			await deleteMessage(ctx, ctx.message.message_id - 1);
@@ -382,7 +382,7 @@ let dataId = JSON.parse(fs.readFileSync(dir + "/data/dataId.json"));
 
 	// Собираем заявки
 
-			let listTickets = await glpm.getAllItems('Ticket', 5);
+			let listTickets = await glpm.getAllItems('Ticket', 4);
 			for(let i = 5; i >= 0; i--){
 				let ticketId;
 				if(!listTickets) break;
@@ -425,7 +425,7 @@ let dataId = JSON.parse(fs.readFileSync(dir + "/data/dataId.json"));
 
 	// Собираем комментарии
 
-			let listComments = await glpm.getAllItems('ITILFollowup', 5);
+			let listComments = await glpm.getAllItems('ITILFollowup', 4);
 			for (let i = 5; i >= 0; i--) {
 				let commentId = listComments[i].id;
 				if (commentId <= dataId.comment) continue;
@@ -478,7 +478,7 @@ async function addComment(comment, ticketId, user){
 async function refreshStatus(){
 	let listTickets = await glpm.getAllItems('Ticket', 49);
 	dataId = JSON.parse(fs.readFileSync(dir + "/data/dataId.json"));	
-	for(let i = 49; i >= 0; i--){
+	for(let i = 50; i >= 0; i--){
 		let ticketId = listTickets[i].id;
 		try{
 			if(dataId["history"][ticketId].status != listTickets[i].status && listTickets[i].users_id_recipient != conf.glpiConfig.user_id){
