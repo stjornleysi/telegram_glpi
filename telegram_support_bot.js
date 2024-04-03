@@ -385,6 +385,7 @@ let dataId = JSON.parse(fs.readFileSync(dir + "/data/dataId.json"));
 			let listTickets = await glpm.getAllItems('Ticket', 4);
 			for(let i = 5; i >= 0; i--){
 				let ticketId;
+				if(!listTickets[i]) continue; 
 				if(!listTickets) break;
 				ticketId = listTickets[i].id;
 				if(ticketId <= dataId.ticket) continue;
@@ -427,6 +428,7 @@ let dataId = JSON.parse(fs.readFileSync(dir + "/data/dataId.json"));
 
 			let listComments = await glpm.getAllItems('ITILFollowup', 4);
 			for (let i = 5; i >= 0; i--) {
+				if(!listComments[i]) continue;
 				let commentId = listComments[i].id;
 				if (commentId <= dataId.comment) continue;
 				if (listComments[i].users_id != conf.glpiConfig.user_id){
@@ -480,6 +482,7 @@ async function refreshStatus(){
 	dataId = JSON.parse(fs.readFileSync(dir + "/data/dataId.json"));	
 	for(let i = 50; i >= 0; i--){
 		let ticketId = listTickets[i].id;
+		
 		try{
 			if(dataId["history"][ticketId].status != listTickets[i].status && listTickets[i].users_id_recipient != conf.glpiConfig.user_id){
 				let messageId = dataId["history"][ticketId].messageId;
