@@ -1,14 +1,16 @@
 const {Telegraf, Markup} = require('telegraf');
 const glpm = require('./lib/glpm.js');
 const cns = require('./lib/const.js');
-const {sleep, parseMessageText, htmlToText} = require('./lib/utils.js');
+const {parseTickets, parseComments, refreshStatus, editTicketStatus} = require('./lib/glpiParse.js');
+const {sleep, createThread, closeThread, getTicketColor, editMessageMarkup, editMessageText} = require('./lib/utils.js');
 const fs = require('fs');
 
 const dir = __dirname;
 let ticketData = {};
-const conf = JSON.parse(fs.readFileSync(dir + "/data/conf.json"));
+let conf = JSON.parse(fs.readFileSync(dir + "/data/conf.json"));
 const glpiUrl = conf.glpiConfig.apiurl.replace("apirest.php", "");
-let threadsData = JSON.parse(fs.readFileSync(dir + "/data/threads.json"));
+let messageData = JSON.parse(fs.readFileSync(dir + "/data/messageData.json"));
+let configData = {};
 
 const bot = new Telegraf(conf.telegramBotToken, {
 	handlerTimeout: 90000 * 5
@@ -27,7 +29,19 @@ bot.hears('Подать заявку', async (ctx) => {
 		await ctx.reply('Выберите, пожалуйста, наиболее подходящую категорию', cns.keyboards.main);
 		await deleteMessage(ctx, ctx.message.message_id);
 	}
-}).catch(error => console.log(error));
+});
+
+	//	Настройка кнопок для переназначения заявки
+
+bot.hears('/configurationUserGroups', async (ctx) => {
+	if(ctx.chat.id == conf.supportChatId){
+		await bot.telegram.sendMessage(conf.supportChatId, 'Выберите действие', {
+			parse_mode: 'HTML',
+			reply_markup: {inline_keyboard: cns.inlineKeyboards.configUserGroups}
+		});
+		await deleteMessage(ctx, ctx.message.message_id);
+	}
+});
 
 	//	Создаём кнопки основного меню
 
@@ -67,7 +81,7 @@ bot.hears('Назад', async (ctx) => {
 	}catch{
 		ctx.reply('Добро пожаловать в чат-бот технической поддержки ' + conf.CompanyName, cns.keyboards.start);
 	}
-}).catch(error => console.log(error));
+});
 
 bot.hears('Отменить заявку', async (ctx) => {
 	if(ctx.chat.id != conf.supportChatId){
@@ -76,7 +90,7 @@ bot.hears('Отменить заявку', async (ctx) => {
 			await deleteMessage(ctx, ctx.message.message_id - 1);
 			await deleteMessage(ctx, ctx.message.message_id);
 	}
-}).catch(error => console.log(error));
+});
 
 bot.hears('Отправить заявку', async (ctx) => {
 	if(ctx.chat.id != conf.supportChatId && ticketData.hasOwnProperty(ctx.chat.id) && ticketData[ctx.chat.id].data["Кабинет"].length > 1){
@@ -90,9 +104,8 @@ bot.hears('Отправить заявку', async (ctx) => {
 		for(key in ticketData[ctx.chat.id]['data']){
 			textToGLPI += '<b>' + key + ':</b> ' + ticketData[ctx.chat.id]['data'][key].replace(/[<>/]/g, '') + '<br>';
 		}	
-		let res = await glpm.createTicket(title, textToGLPI);
-		let messageText = `<a href="http://example.com/${ctx.chat.id}/${ctx.message.message_id+2}">&#8203</a>`;
-		messageText += `🟢 <b>ЗАЯВКА  <a href="${glpiUrl}front/ticket.form.php?id=${res}">№${res}</a></b>\n\n`;
+		let ticketId = await glpm.createTicket(title, textToGLPI);
+		let messageText = `🟢 <b>ЗАЯВКА  <a href="${glpiUrl}front/ticket.form.php?id=${ticketId}">№${ticketId}</a></b>\n\n`;
 		let userLogin = '';
 		if(ctx.chat.username) userLogin = ' (@' + ctx.chat.username + ')';
 		ticketData[ctx.chat.id]['data']['Автор заявки'] += userLogin;
@@ -103,17 +116,25 @@ bot.hears('Отправить заявку', async (ctx) => {
 			parse_mode: 'HTML',
 			reply_markup: {inline_keyboard: cns.inlineKeyboards.open}
 		});
+		messageData.data[ticketId] = {
+			messageId: messg.message_id,
+			userMassageId: ctx.message.message_id + 2,
+			userChatId: ctx.chat.id,
+			status: 1
+		}
+		let threadTitle = `🟢 ${ticketId}${title.replace(ticketData[ctx.chat.id].data["Кабинет"], '')}`;
+		await createThread(bot, messageData, ticketId, threadTitle);
 		await ctx.reply('Заявка отправлена', cns.keyboards.start);
 		await deleteMessage(ctx, ctx.message.message_id - 1);
 		await deleteMessage(ctx, ctx.message.message_id);
-		let messageUserText = messageText.replace('">&#8203</a>', `/${messg.message_id}">&#8203</a>`);
-		await ctx.telegram.sendMessage(ctx.message.chat.id, messageUserText, {
+		await ctx.telegram.sendMessage(ctx.chat.id, messageText, {
 			parse_mode: 'HTML',
 			reply_markup: {inline_keyboard: cns.inlineKeyboards.userAddComment}
 		});
+		fs.writeFileSync(dir + "/data/messageData.json", JSON.stringify(messageData, null, 3));
 		delete ticketData[ctx.chat.id];
 	}
-}).catch(error => console.log(error));
+});
 
 	// Обработка сообщений
 
@@ -124,13 +145,17 @@ bot.on('text', async (ctx) => {
 			ticketId = ctx.message.reply_to_message.text.split('№')[1].split('\n')[0];
 		}catch{}
 		if(!ticketData.hasOwnProperty(ctx.chat.id) && ticketId){
-			if(!threadsData.hasOwnProperty(ticketId)){
-				let generalMessageId = ctx.message.reply_to_message.entities[0].url.split('/')[5];
-				await createThread(ticketId, generalMessageId, ctx.chat.id, ctx.message.reply_to_message.message_id);
+			if(!messageData.data[ticketId].hasOwnProperty('threadId')){
+				let ticket = await glpm.getItem('Ticket', ticketId);
+				let title = `🟢 ${ticketId} - ${ticket.name}`;
+				await createThread(bot, messageData, ticketId, title);
 			}
+			if(!ctx.chat.last_name) ctx.chat.last_name = '';
 			let userName = ctx.chat.first_name + ' ' + ctx.chat.last_name;
 			let messageText = `<b>Комментарий от ${userName}:</b>\n\n${ctx.message.text}`;
-			await bot.telegram.sendMessage(conf.supportChatId, messageText, {parse_mode: "HTML", message_thread_id: threadsData[ticketId]["threadId"]});
+			await bot.telegram.sendMessage(conf.supportChatId, messageText, {
+				parse_mode: "HTML", message_thread_id: messageData.data[ticketId].threadId
+			});
 			let discript = `<b><font color="blue">Комментарий от ${userName}:</font></b><br><br>`;
 			await glpm.addComment(ticketId, discript + ctx.message.text);
 		}else if(ticketId){
@@ -155,40 +180,56 @@ bot.on('text', async (ctx) => {
 			await deleteMessage(ctx, ctx.message.message_id);
 		}
 	}else if(ctx.message.message_thread_id){
-		let thread = {};
 		let ticket;
-		for(let i in threadsData){
-			if(threadsData[i].threadId == ctx.message.message_thread_id){
-				thread = threadsData[i];
+		for(let i in messageData.data){
+			if(messageData.data[i].threadId == ctx.message.message_thread_id){
 				ticket = i;
 				break;	
 			}
 		}
-		if(thread.hasOwnProperty('threadId') && thread.userChatId){
-			await bot.telegram.sendMessage(thread.userChatId, ctx.message.text, {reply_parameters: {message_id: thread.userMessgId}});
+		if(messageData.data[ticket].hasOwnProperty('userChatId')){
+			try{
+				await bot.telegram.sendMessage(messageData.data[ticket].userChatId, ctx.message.text, {
+					reply_parameters: {message_id: messageData.data[ticket].userMassageId}
+				});
+			}catch{
+				await bot.telegram.sendMessage(messageData.data[ticket].userChatId, ctx.message.text);				
+			}
 		}
 		await glpm.addComment(ticket, ctx.message.text);
+	}else if(configData.hasOwnProperty("flag")){
+		configData["text"] = ctx.message.text.trim();
+		configData["id"] = ctx.message.message_id;
 	}
-}).catch(error => console.log(error));
+});
 
 	// Обработка изображений из приватных чатов
 
 bot.on('photo', async (ctx) => {
 	if(ctx.chat.id != conf.supportChatId){
-		if(!ticketData.hasOwnProperty(ctx.chat.id)){
-			let ticketId;
-			try{
-				ticketId = ctx.message.reply_to_message.text.split('№')[1].split('\n')[0];
-			}catch{}
-			if(!ticketId) return;
-			if(!threadsData.hasOwnProperty(ticketId)){
-				let generalMessageId = ctx.message.reply_to_message.entities[0].url.split('/')[5];
-				await createThread(ticketId, generalMessageId, ctx.chat.id, ctx.message.reply_to_message.message_id);
+		let ticketId;
+		let messg = ctx.message.reply_to_message.text;
+		try{
+			ticketId = messg.split('№')[1].split('\n')[0];
+		}catch{}
+		if(!ticketData.hasOwnProperty(ctx.chat.id) && ticketId){
+			if(!messageData.data[ticketId].hasOwnProperty(threadId)){
+				let ticket = await glpm.getItem('Ticket', ticketId);
+				let title = `🟢 ${ticketId}${ticket.name.split('-')[1]}-${ticket.name.split('-')[2]}`;
+				await createThread(bot, messageData, ticketId, title);
 			}
-			await bot.telegram.sendPhoto(conf.supportChatId, ctx.message.photo[0].file_id, {message_thread_id: threadsData[ticketId]["threadId"]});
+			await bot.telegram.sendPhoto(conf.supportChatId, ctx.message.photo[0].file_id, {message_thread_id: messageData.data[ticketId]["threadId"]});
 		}	
 	}
-}).catch(error => console.log(error));
+});
+
+	// Сохраняем ID последнего сообщения в чате
+
+bot.on('message', async (ctx) => {
+	if(ctx.message.forum_topic_edited){
+		await deleteMessage(ctx, ctx.message.message_id);
+	}
+});
 
 	// Функция для создания кнопок основного меню с похожим функционалом
 
@@ -218,71 +259,60 @@ async function deleteMessage(ctx, message_id){
 	}catch{}
 }
 
-async function editMessage(message, keyboard, silent){
-	try{
-		let ticketId = message.text.split('\n')[0].split('№')[1];
-		let chatId = message.chat.id;
-		let ticketData = await glpm.getItem('Ticket', ticketId);
-		message['status'] = ticketData.status;
-		if(message.entities[0].url.split('/')[5]) silent = undefined;
-		messageText = await parseMessageText(message, silent);
-		let inKeyboard = JSON.parse(JSON.stringify(keyboard));
-		if(inKeyboard[0][0].text == "✔" || inKeyboard[0][0].text == '✅'){
-			if(threadsData.hasOwnProperty(ticketId)){
-				delete inKeyboard[0][1].callback_data;
-				inKeyboard[0][1]["url"] = `t.me/c/${conf.supportChatId.substring(4)}/${threadsData[ticketId].threadId}`;
-			}else{
-				delete inKeyboard[0][1].url;
-				inKeyboard[0][1].callback_data = 'AddComment';
-			}
-		}
-		await bot.telegram.editMessageText(chatId, message.message_id, undefined, messageText, {
-			parse_mode: 'HTML',
-			reply_markup: {inline_keyboard: inKeyboard},
-			entities: message.entities
-		});
-	}catch{}
-}
-
 	//	Создаём обработчики инлайн кнопок		
 
-createAction('ConfirmOpen', 1, cns.inlineKeyboards.open);
-createAction('ConfirmClose', 6, cns.inlineKeyboards.close);
-createAction('OpenTicket', null, cns.inlineKeyboards.confirmOpen);
-createAction('CloseTicket', null, cns.inlineKeyboards.confirmClose);
-createAction('CloseThread', null, cns.inlineKeyboards.threadPinConfirm);
-createAction('CancelCloseThread', null, cns.inlineKeyboards.threadPin);
+createAction('OpenTicket', cns.inlineKeyboards.confirmOpen);
+createAction('CloseTicket', cns.inlineKeyboards.confirmClose);
+createAction('ChangeStatus', cns.inlineKeyboards.changeStatus);
+createAction('ConfirmOpen', cns.inlineKeyboards.open, 1);
+createAction('ConfirmClose', cns.inlineKeyboards.close, 6);
+createAction('WaitingStatus', cns.inlineKeyboards.open, 4);
+createAction('WorkingStatus', cns.inlineKeyboards.open, 2);
+createAction('OpenThread', cns.inlineKeyboards.open);
 
-function createAction(action, status, keyboard){
+function createAction(action, keyboard, status){
 	try{
 		bot.action(action, async (ctx) => {
 			let message = ctx.update.callback_query.message;
-			if(status){
-				let ticketId = message.text.split('\n')[0].split('№')[1];		
+			let ticketId = message.text.split('\n')[0].split('№')[1];
+			let td = messageData.data[ticketId];
+			if(status || action == 'OpenThread'){
 				await glpm.changeStatusTicket(ticketId, status);
-				if(dataId.hasOwnProperty(ticketId)) dataId[ticketId].status = status;
+				await editTicketStatus(bot, messageData, message);
 				if(status == 6){
-					let userChatId = message.entities[0].url.split('/')[3];
-					let userMessgId = message.entities[0].url.split('/')[4];
-					if(userChatId){
-						await bot.telegram.sendMessage(userChatId, "<b>Заявка закрыта</b>", {
-							reply_parameters: {message_id: userMessgId},
-							parse_mode: "HTML"
-						});
+					if(td.hasOwnProperty('userChatId')){
+						try{
+							await bot.telegram.sendMessage(td.userChatId, "<b>Заявка закрыта</b>", {
+								reply_parameters: {message_id: td.userMassageId},
+								parse_mode: "HTML"
+							});
+						}catch{
+							await bot.telegram.sendMessage(td.userChatId, "<b>Заявка закрыта</b>", {
+								parse_mode: "HTML"
+							});
+						}
 					}
-					if(threadsData.hasOwnProperty(ticketId)){
-						let thread = threadsData[ticketId].threadId;
-						await bot.telegram.deleteForumTopic(conf.supportChatId, thread);
-						delete threadsData[ticketId];						
-						let jsonData = JSON.stringify(threadsData, null, 3);
-						fs.writeFileSync(dir + "/data/threads.json", jsonData);						
+					if(td.hasOwnProperty('threadId')){
+						await closeThread(bot, messageData, ticketId);
 					}
-				}				
+				}else if(!td.hasOwnProperty('threadId') && (status == 1 || action == 'OpenThread')){
+					let color = await getTicketColor(status || td.status);
+					let title;
+					if(td.hasOwnProperty('userChatId')){
+						let problem = message.text.split('\n')[4].replace('Категория: ', '');
+						let author = message.text.split('\n')[2].replace('Автор заявки: ', '').replace(/\(@[^)]+\)/g, '');
+						title = `${color} ${ticketId} - ${problem} - ${author}`;
+					}else{
+						title = `${color} ${ticketId} - ${message.text.split('\n')[3].replace('Проблема: ', '')}`;
+					}
+					await createThread(bot, messageData, ticketId, title);
+				}
+			}else{
+				await editMessageMarkup(bot, message.message_id, keyboard);
 			}
-			await editMessage(message, keyboard);
 		});
-	}catch(error){
-		console.error('Failed to action: ' + action, error);
+	}catch(e){
+		fs.appendFileSync(dir + "/logs/logs.json", JSON.stringify(e, null, 3));
 	}
 }
 
@@ -290,80 +320,102 @@ function createAction(action, status, keyboard){
 
 bot.action('RefreshStatus', async (ctx) => {
 	let message = ctx.update.callback_query.message;
-	let ticketId = message.text.split('\n')[0].split('№')[1];
-	let ticketData = await glpm.getItem('Ticket', ticketId);
-	switch(ticketData.status){
-		case 1: await editMessage(message, cns.inlineKeyboards.open); break;
-		case 2: await editMessage(message, cns.inlineKeyboards.open); break;
-		case 4: await editMessage(message, cns.inlineKeyboards.open); break;
-		case 6: await editMessage(message, cns.inlineKeyboards.close); break;
-		default: await editMessage(message, cns.inlineKeyboards.close); break;
-	}
-}).catch(error => console.log(error));
+	await editTicketStatus(bot, messageData, message);
+});
 
-	// Обработчик для кнопки с облачком, которая создает новую тему
-
-bot.action('AddComment', async (ctx) => {
-	let message = ctx.update.callback_query.message;
-	let userChatId = message.entities[0].url.split('/')[3];
-	let userMessgId = message.entities[0].url.split('/')[4];
-	let generalMessageId = message.entities[0].url.split('/')[5];
-	if(!generalMessageId) generalMessageId = message.message_id;
-	let ticketId = message.text.split('\n')[0].split('№')[1];
-	if(!threadsData.hasOwnProperty(ticketId)){
-		await editMessage(message, message.reply_markup.inline_keyboard, generalMessageId);
-		await createThread(ticketId, generalMessageId, userChatId, userMessgId);
-	}
-}).catch(error => console.log(error));
-
-	// Создание новой темы
-
-async function createThread(ticketId, generalMessageId, userChatId, userMessageId){
-    let thread = await bot.telegram.createForumTopic(conf.supportChatId, ticketId);
-    threadsData[ticketId] = {
-        "userChatId": userChatId,
-        "userMessgId": userMessageId,
-        "threadId": thread.message_thread_id
-    };
-    let ticket = await glpm.getItem('Ticket', ticketId);
-	let inKeyboard = JSON.parse(JSON.stringify(cns.inlineKeyboards.open));
-    if (ticket.status == 6 || ticket.status == 5){
-		inKeyboard = JSON.parse(JSON.stringify(cns.inlineKeyboards.close));		
-	}
-    delete inKeyboard[0][1].callback_data;
-	inKeyboard[0][1]["url"] = `t.me/c/${conf.supportChatId.substring(4)}/${thread.message_thread_id}`;
-    await bot.telegram.editMessageReplyMarkup(conf.supportChatId, generalMessageId, undefined, { inline_keyboard: inKeyboard });
-    let msg = await bot.telegram.copyMessage(conf.supportChatId, conf.supportChatId, generalMessageId, {
-        parse_mode: 'HTML',
-        disable_notification: true,
-        message_thread_id: thread.message_thread_id,
-        reply_markup: { inline_keyboard: cns.inlineKeyboards.threadPin }
-    });
-    await bot.telegram.pinChatMessage(conf.supportChatId, msg.message_id, { disable_notification: true });
-    let jsonData = JSON.stringify(threadsData, null, 3);
-    fs.writeFileSync(dir + "/data/threads.json", jsonData);
-}
+	// Обработчик для кнопки с подсказкой о добавлении комментария
 
 bot.action('UserAddComment', async (ctx) => {
 	await ctx.reply('Чтобы отправить комментарий, <b>ответьте на сообщение с номером заявки</b> (которое начинается с 🟢)', {parse_mode: "HTML"});
 });
 
-	// Закрыть тему
+	// Изменить конфигурацию пользовательских групп
 
-bot.action('ConfirmCloseThread', async (ctx) => {
+createConfigButtons('AddNewGroup', 'Укажите название новой группы');
+createConfigButtons('AddNewUser', 'Укажите группу и glpi id пользователя в формате:\n[Группа]: [id]');
+createConfigButtons('RemoveGroup', 'Укажите название удаляемой группы');
+createConfigButtons('RemoveUser', 'Укажите группу и glpi id пользователя в формате:\n[Группа]: [id]');
+
+function createConfigButtons(action, messageText){
+	bot.action(action, async (ctx) => {
+		let message = ctx.update.callback_query.message;
+		await editMessageText(bot, message.message_id, messageText, cns.inlineKeyboards.confirmConfig)
+		configData["flag"] = action;
+	});	
+}
+
+bot.action('ConfirmConfig', async (ctx) => {
+	if(configData.hasOwnProperty('id')){
+		let messageId = ctx.update.callback_query.message.message_id;
+		switch(configData.flag){
+			case "AddNewGroup": conf.userGroups[configData.text] = []; break;
+			case "AddNewUser": let gu = configData.text.split(':'); conf.userGroups[gu[0].trim()].push(gu[1].trim()); break;
+			case "RemoveGroup": delete conf.userGroups[configData.text]; break;
+			case "RemoveUser": let rgu = configData.text.split(':'); let index = conf.userGroups[rgu[0].trim()].indexOf(rgu[1].trim());
+				conf.userGroups[rgu[0].trim()].splice(index, 1); break;
+		}
+		let jsonData = JSON.stringify(conf, null, 3);
+		fs.writeFileSync(dir + "/data/conf.json", jsonData);
+		createAssignActions();
+		await deleteMessage(ctx.update.callback_query, configData.id);
+		configData = {};
+		await editMessageMarkup(bot, messageId, cns.inlineKeyboards.configUserGroups);
+	}
+});
+
+bot.action('ExitConfig', async (ctx) => {
+	configData = {};
 	let message = ctx.update.callback_query.message;
-	let ticketId = message.text.split('№')[1].split('\n')[0];
-	let messageId = message.entities[0].url.split('/')[5];
-	message.message_id = messageId;
-	delete threadsData[ticketId];
-	await bot.telegram.deleteForumTopic(conf.supportChatId, message.message_thread_id);
-	let ticket = await glpm.getItem("Ticket", ticketId);
-	let inKeyboard = cns.inlineKeyboards.open;
-	if(ticket.status == 6 || ticket.status == 5) inKeyboard = cns.inlineKeyboards.close;
-	await editMessage(message, inKeyboard);
-	let jsonData = JSON.stringify(threadsData, null, 3);
-	fs.writeFileSync(dir + "/data/threads.json", jsonData);
-}).catch(error => console.log(error));
+	await bot.telegram.deleteMessage(conf.supportChatId, message.message_id);
+});
+
+bot.action('CancellConfirm', async (ctx) => {
+	await deleteMessage(ctx.update.callback_query, configData.id);
+	configData = {};
+	let message = ctx.update.callback_query.message;
+	await editMessageMarkup(bot, message.message_id, cns.inlineKeyboards.configUserGroups);
+});
+
+	// Обработчики для кнопок с переназначением заявок 
+
+bot.action('AssignTicket', async (ctx) => {
+	let message = ctx.update.callback_query.message;
+	let keyboard = [[]];
+	let row = 0;
+	for(let key in conf.userGroups){
+		if(row == 3){
+			keyboard.push([]);
+			row = 0;
+		}
+		keyboard[keyboard.length-1].push({text: key, callback_data: 'ButtonFor_' + key});
+		row++;
+	}
+	keyboard[keyboard.length-1].push({text: 'Отмена', callback_data: 'RefreshStatus'});
+	await editMessageMarkup(bot, message.message_id, keyboard);
+});
+
+	// Создание обработчиков событий для переназначения заявок
+
+createAssignActions();
+
+function createAssignActions(){
+	for(let key in conf.userGroups){
+		bot.action('ButtonFor_' + key, async (ctx) => {
+			let message = ctx.update.callback_query.message;
+			let ticketId = message.text.split('№')[1].split('\n')[0];
+			for(let i in conf.userGroups[key]){
+				await glpm.assignTicket(ticketId, conf.userGroups[key][i]);
+			}
+			if(message.text.indexOf("⚫") < 0){
+				await glpm.changeStatusTicket(ticketId, 2);
+			}
+			await editTicketStatus(bot, messageData, message);
+			if(messageData.data[ticketId].hasOwnProperty('threadId')){
+				await closeThread(bot, messageData, ticketId);
+			}
+		});		
+	}
+}
 
 process.on('uncaughtException', (error) => {
     console.log(error);
@@ -373,163 +425,21 @@ bot.launch();
 
 	// Сборщик заявок и комментариев из GLPI
 
-let dataId = JSON.parse(fs.readFileSync(dir + "/data/dataId.json"));
-
 (async () => {
 	let counter = 0;	// счетчик для выполнения функции refreshStatus()
     while (true) {
 		try{
-
-	// Собираем заявки
-
-			let listTickets = await glpm.getAllItems('Ticket', 4);
-			for(let i = 5; i >= 0; i--){
-				let ticketId;
-				if(!listTickets) break;				
-				if(!listTickets[i]) continue; 
-				ticketId = listTickets[i].id;
-				if(ticketId <= dataId.ticket) continue;
-				if(listTickets[i].users_id_recipient != conf.glpiConfig.user_id){
-					let usersArray = await glpm.getUsers(ticketId);
-					let authorEmail;
-					if(!usersArray[0]) continue;
-					if(usersArray[0].hasOwnProperty('alternative_email') && usersArray[0].alternative_email){
-						authorEmail = usersArray[0].alternative_email;
-					}else{
-						let temp = await glpm.getItem("User", usersArray[0].users_id);
-						authorEmail = temp.firstname + ' ' + temp.realname;
-					}
-					let text = await htmlToText(listTickets[i].content);
-					let messageText = `🟢 <b>ЗАЯВКА  <a href="${glpiUrl}front/ticket.form.php?id=${ticketId}">№${ticketId}</a></b>\n\n`;
-					messageText += `<b>Автор заявки: </b>${authorEmail}\n`;
-					messageText += `<b>Проблема: </b>${listTickets[i].name}\n<b>Описание: </b>`;
-					messageText += text;
-					if(messageText.length > 600){
-						messageText = `${messageText.substring(0, 500)} + '\n\n<b><a href="${glpiUrl}front/ticket.form.php?id=${ticketId}">Читать дальше</a></b>`;
-					}
-					let messg = await bot.telegram.sendMessage(conf.supportChatId, messageText, {
-						parse_mode: 'HTML',
-						reply_markup: { inline_keyboard: cns.inlineKeyboards.open }
-					});
-					let silentInfo = `<a href="http://example.com///${messg.message_id}">&#8203</a>`;
-					await bot.telegram.editMessageText(conf.supportChatId, messg.message_id, undefined, silentInfo + messageText, {
-						parse_mode: 'HTML',
-						reply_markup: { inline_keyboard: cns.inlineKeyboards.open }
-					});
-					dataId.history[ticketId] = {};
-					dataId.history[ticketId]["messageId"] = messg.message_id;
-					dataId.history[ticketId]["status"] = 1; 
-					dataId.ticket = ticketId;
-				}
-				fs.writeFileSync(dir + "/data/dataId.json", JSON.stringify(dataId, null, 3));
+			await parseTickets(bot, messageData);
+			await parseComments(bot, messageData);
+			if(counter >= 60){
+				await refreshStatus(bot, messageData);
+				counter = 0;
 			}
-
-	// Собираем комментарии
-
-			let listComments = await glpm.getAllItems('ITILFollowup', 4);
-			for (let i = 5; i >= 0; i--) {
-				if(!listComments) break;
-				if(!listComments[i]) continue;
-				let commentId = listComments[i].id;
-				if (commentId <= dataId.comment) continue;
-				if (listComments[i].users_id != conf.glpiConfig.user_id){
-					let ticketId = listComments[i].items_id;
-					let text = await htmlToText(listComments[i].content);
-					let user;
-					if (listComments[i].users_id) {
-						let temp = await glpm.getItem("User", listComments[i].users_id);
-						user = temp.firstname + ' ' + temp.realname;
-					} else {
-						let temp = await glpm.getUsers(ticketId);
-						user = temp[0].alternative_email;
-					}
-					await addComment(text, ticketId, user);
-				}
-				dataId.comment = commentId;
-				fs.writeFileSync(dir + "/data/dataId.json", JSON.stringify(dataId, null, 3));
-			}
-		}catch(err){ console.log(err) }
-        await sleep(10000);
-		counter++;
-		if(counter >= 60){
-			await refreshStatus();
-			counter = 0;
+		}catch(e){
+			fs.appendFileSync(dir + "/logs/logs.json", JSON.stringify(e, null, 3));
 		}
+		await sleep(10000);
+		counter++;
     }
 })();
 
-	// Отправка комментария в Telegram
-
-async function addComment(comment, ticketId, user){
-    try{
-        threadsData = JSON.parse(fs.readFileSync(dir + "/data/threads.json"));
-        if(!threadsData.hasOwnProperty(ticketId)){
-			if(!dataId.history.hasOwnProperty(ticketId)) return;
-			let generalMessageId = dataId.history[ticketId].messageId;
-			await createThread(ticketId, generalMessageId);
-        }
-        let messageText = `<b>Комментарий от ${user}:</b>\n\n${comment}`;
-		if(messageText.length > 2400){
-			messageText = `${messageText.substring(0, 2400)} + '\n\n<b><a href="${glpiUrl}front/ticket.form.php?id=${ticketId}">Читать дальше</a></b>`;
-		}
-        await bot.telegram.sendMessage(conf.supportChatId, messageText, {parse_mode: "HTML", message_thread_id: threadsData[ticketId]["threadId"]});
-    }catch(err){console.log(err)}
-}
-
-	// обновляет статусы последних 50 заявок
-
-async function refreshStatus(){
-	let listTickets = await glpm.getAllItems('Ticket', 49);
-	dataId = JSON.parse(fs.readFileSync(dir + "/data/dataId.json"));	
-	for(let i = 50; i >= 0; i--){
-		if(!listTickets) break;				
-		if(!listTickets[i]) continue; 
-		let ticketId = listTickets[i].id;
-		try{
-			if(dataId["history"][ticketId].status != listTickets[i].status && listTickets[i].users_id_recipient != conf.glpiConfig.user_id){
-				let messageId = dataId["history"][ticketId].messageId;
-				let color = '🟢';
-				switch(listTickets[i].status){
-					case 1: color = '🟢'; break;
-					case 2: color = '🔵'; break;
-					case 4: color = '🟠'; break;
-					case 6: color = '⚫'; break;
-					default: color = '⚫';
-				}  				
-				let usersArray = await glpm.getUsers(ticketId);
-				let authorEmail;
-				if(usersArray[0].hasOwnProperty('alternative_email') && usersArray[0].alternative_email){
-					authorEmail = usersArray[0].alternative_email;
-				}else{
-					let temp = await glpm.getItem("User", usersArray[0].users_id);
-					authorEmail = temp.firstname + ' ' + temp.realname;
-				}				
-				let text = await htmlToText(listTickets[i].content);
-				let messageText = `${color} <b>ЗАЯВКА  <a href="${glpiUrl}front/ticket.form.php?id=${ticketId}">№${ticketId}</a></b>\n\n`;
-				messageText += `<b>Автор заявки: </b>${authorEmail}\n`;
-				messageText += `<b>Проблема: </b>${listTickets[i].name}\n<b>Описание: </b>`;
-				messageText += text;
-				if(messageText.length > 600){
-					messageText = `${messageText.substring(0, 500)} + '\n\n<b><a href="${glpiUrl}front/ticket.form.php?id=${ticketId}">Читать дальше</a></b>`;
-				}
-				let silentInfo = `<a href="http://example.com///${messageId}">&#8203</a>`;
-				let inKeyboard;
-				if(listTickets[i].status == 5 || listTickets[i].status == 6){
-					inKeyboard = JSON.parse(JSON.stringify(cns.inlineKeyboards.close));
-				}else{
-					inKeyboard = JSON.parse(JSON.stringify(cns.inlineKeyboards.open));
-				}
-				if(threadsData.hasOwnProperty(ticketId)){
-					delete inKeyboard[0][1].callback_data;
-					inKeyboard[0][1]["url"] = `t.me/c/${conf.supportChatId.substring(4)}/${threadsData[ticketId].threadId}`;
-				}
-				await bot.telegram.editMessageText(conf.supportChatId, messageId, undefined, silentInfo + messageText, {
-					parse_mode: 'HTML',
-					reply_markup: { inline_keyboard: inKeyboard }
-				});
-				dataId.history[ticketId]["status"] = listTickets[i].status;
-			}
-		}catch(err){}
-	}
-	fs.writeFileSync(dir + "/data/dataId.json", JSON.stringify(dataId, null, 3));
-}

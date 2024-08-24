@@ -1,11 +1,27 @@
 {
-    "telegramBotToken": "",   
-    "supportChatId": "", 
-    "CompanyName": "",   
-    "glpiConfig": {
-        "apiurl": "",
-        "app_token": "", 
-        "user_token": "",
-        "user_id": ""
-    }
+   "telegramBotToken": "",
+   "supportChatId": "",
+   "TesttelegramBotToken": "",
+   "TestsupportChatId": "",
+   "CompanyName": "",
+   "glpiConfig": {
+      "apiurl": "",
+      "app_token": "",
+      "user_token": "",
+      "user_id": 5
+   },
+   "userGroups": {
+      "Почта": [
+         "115",
+         "125"
+      ],
+      "Хостинг": [
+         "94",
+         "169"
+      ],
+      "Телефония": [
+         "52",
+         "67"
+      ]
+   }
 }

@@ -11,8 +11,8 @@
   },
   "nodemonConfig": {
     "ignore": [
-      "./data/dataId.json",
-      "./data/threads.json"
+      "./data/messageData.json",
+      "./logs/logs.json"
     ],
     "delay": "10"
   }

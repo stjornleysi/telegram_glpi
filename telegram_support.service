@@ -1,6 +1,6 @@
 [Service]
 User=root
-ExecStart=node /home/user/telegram_support_bot/telegram_support_bot.js
+ExecStart=node /root/telegram_support_bot/telegram_support_bot.js
 Restart=always
 
 [Install]
