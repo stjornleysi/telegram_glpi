@@ -352,7 +352,7 @@ bot.action('ConfirmConfig', async (ctx) => {
 			case "AddNewUser": let gu = configData.text.split(':'); conf.userGroups[gu[0].trim()].push(gu[1].trim()); break;
 			case "RemoveGroup": delete conf.userGroups[configData.text]; break;
 			case "RemoveUser": let rgu = configData.text.split(':'); let index = conf.userGroups[rgu[0].trim()].indexOf(rgu[1].trim());
-				conf.userGroups[rgu[0].trim()].splice(index, 1); break;
+				index >= 0 ? conf.userGroups[rgu[0].trim()].splice(index, 1) : false; break;
 		}
 		let jsonData = JSON.stringify(conf, null, 3);
 		fs.writeFileSync(dir + "/data/conf.json", jsonData);
