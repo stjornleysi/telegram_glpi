@@ -370,7 +370,7 @@ bot.action('ExitConfig', async (ctx) => {
 });
 
 bot.action('CancellConfirm', async (ctx) => {
-	await deleteMessage(ctx.update.callback_query, configData.id);
+	await deleteMessage(conf.supportChatId, configData.id);
 	configData = {};
 	let message = ctx.update.callback_query.message;
 	await editMessageMarkup(bot, message.message_id, cns.inlineKeyboards.configUserGroups);
