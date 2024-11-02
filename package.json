@@ -12,7 +12,7 @@
   "nodemonConfig": {
     "ignore": [
       "./data/messageData.json",
-      "./logs/logs.json"
+      "./logs/logs.txt"
     ],
     "delay": "10"
   }

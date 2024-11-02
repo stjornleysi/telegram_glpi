@@ -146,9 +146,8 @@ bot.on('text', async (ctx) => {
 		}catch{}
 		if(!ticketData.hasOwnProperty(ctx.chat.id) && ticketId){
 			if(!messageData.data[ticketId].hasOwnProperty('threadId')){
-				let ticket = await glpm.getItem('Ticket', ticketId);
-				let title = `🟢 ${ticketId} - ${ticket.name}`;
-				await createThread(bot, messageData, ticketId, title);
+				await ctx.reply("Эта заявка уже закрыта. Создайте, пожалуйста, новую");
+				return;
 			}
 			if(!ctx.chat.last_name) ctx.chat.last_name = '';
 			let userName = ctx.chat.first_name + ' ' + ctx.chat.last_name;
@@ -278,7 +277,7 @@ function createAction(action, keyboard, status){
 			let td = messageData.data[ticketId];
 			if(status || action == 'OpenThread'){
 				await glpm.changeStatusTicket(ticketId, status);
-				await editTicketStatus(bot, messageData, message);
+				await editTicketStatus(bot, messageData, ticketId);
 				if(status == 6){
 					if(td.hasOwnProperty('userChatId')){
 						try{
@@ -312,15 +311,16 @@ function createAction(action, keyboard, status){
 			}
 		});
 	}catch(e){
-		fs.appendFileSync(dir + "/logs/logs.json", JSON.stringify(e, null, 3));
+		fs.appendFileSync(dir + "/logs/logs.txt", e.stack);
 	}
 }
 
 	// Обработчик для кнопки "Отмена"
 
-bot.action('RefreshStatus', async (ctx) => {
+bot.action('RefreshTicket', async (ctx) => {
 	let message = ctx.update.callback_query.message;
-	await editTicketStatus(bot, messageData, message);
+	let ticketId = message.text.split('№')[1].split('\n')[0];
+	await editTicketStatus(bot, messageData, ticketId);
 });
 
 	// Обработчик для кнопки с подсказкой о добавлении комментария
@@ -357,7 +357,7 @@ bot.action('ConfirmConfig', async (ctx) => {
 		let jsonData = JSON.stringify(conf, null, 3);
 		fs.writeFileSync(dir + "/data/conf.json", jsonData);
 		createAssignActions();
-		await deleteMessage(ctx.update.callback_query, configData.id);
+		await deleteMessage(conf.supportChatId, configData.id);
 		configData = {};
 		await editMessageMarkup(bot, messageId, cns.inlineKeyboards.configUserGroups);
 	}
@@ -370,7 +370,7 @@ bot.action('ExitConfig', async (ctx) => {
 });
 
 bot.action('CancellConfirm', async (ctx) => {
-	await deleteMessage(conf.supportChatId, configData.id);
+	await deleteMessage(ctx.update.callback_query, configData.id);
 	configData = {};
 	let message = ctx.update.callback_query.message;
 	await editMessageMarkup(bot, message.message_id, cns.inlineKeyboards.configUserGroups);
@@ -390,7 +390,7 @@ bot.action('AssignTicket', async (ctx) => {
 		keyboard[keyboard.length-1].push({text: key, callback_data: 'ButtonFor_' + key});
 		row++;
 	}
-	keyboard[keyboard.length-1].push({text: 'Отмена', callback_data: 'RefreshStatus'});
+	keyboard[keyboard.length-1].push({text: 'Отмена', callback_data: 'RefreshTicket'});
 	await editMessageMarkup(bot, message.message_id, keyboard);
 });
 
@@ -409,7 +409,7 @@ function createAssignActions(){
 			if(message.text.indexOf("⚫") < 0){
 				await glpm.changeStatusTicket(ticketId, 2);
 			}
-			await editTicketStatus(bot, messageData, message);
+			await editTicketStatus(bot, messageData, ticketId);
 			if(messageData.data[ticketId].hasOwnProperty('threadId')){
 				await closeThread(bot, messageData, ticketId);
 			}
@@ -436,7 +436,7 @@ bot.launch();
 				counter = 0;
 			}
 		}catch(e){
-			fs.appendFileSync(dir + "/logs/logs.json", JSON.stringify(e, null, 3));
+			fs.appendFileSync(dir + "/logs/logs.txt", e.stack);
 		}
 		await sleep(10000);
 		counter++;
