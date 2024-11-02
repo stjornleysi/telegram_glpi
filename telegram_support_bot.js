@@ -311,7 +311,7 @@ function createAction(action, keyboard, status){
 			}
 		});
 	}catch(e){
-		fs.appendFileSync(dir + "/logs/logs.txt", e.stack);
+		fs.appendFileSync(dir + "/logs/logs.txt", e.stack + "\n\n");
 	}
 }
 
@@ -436,7 +436,7 @@ bot.launch();
 				counter = 0;
 			}
 		}catch(e){
-			fs.appendFileSync(dir + "/logs/logs.txt", e.stack);
+			fs.appendFileSync(dir + "/logs/logs.txt", e.stack + "\n\n");
 		}
 		await sleep(10000);
 		counter++;
